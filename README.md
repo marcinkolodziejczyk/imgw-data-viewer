@@ -1,6 +1,6 @@
 # ImgwDataViewer
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 19.2.19.
+This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.2.2.
 
 ## Development server
 
@@ -38,10 +38,10 @@ This will compile your project and store the build artifacts in the `dist/` dire
 
 ## Running unit tests
 
-To execute unit tests with the [Karma](https://karma-runner.github.io) test runner, use the following command:
+To execute unit tests with [Jest](https://jestjs.io), use the following command:
 
 ```bash
-ng test
+npm test
 ```
 
 ## Running end-to-end tests

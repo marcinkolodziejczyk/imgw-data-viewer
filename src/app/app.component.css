@@ -46,6 +46,28 @@
   color: rgba(0, 0, 0, 0.6);
 }
 
+.weather-icon-cell {
+  text-align: center;
+}
+
+.weather-icon {
+  font-size: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.weather-icon--snow {
+  color: #4fc3f7;
+}
+
+.weather-icon--rain {
+  color: #42a5f5;
+}
+
+.weather-icon--empty {
+  color: rgba(0, 0, 0, 0.38);
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;

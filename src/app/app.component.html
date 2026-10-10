@@ -5,8 +5,13 @@
 
   <section class="filters">
     <mat-form-field appearance="outline">
-      <mat-label>Stacja</mat-label>
-      <mat-select [ngModel]="selectedStation()" (ngModelChange)="selectedStation.set($event)">
+      <mat-label>Stacje</mat-label>
+      <mat-select
+        multiple
+        [ngModel]="stationSelectModel()"
+        (ngModelChange)="onStationsChange($event)"
+      >
+        <mat-option [value]="ALL_STATIONS">Zaznacz wszystkie</mat-option>
         @for (station of stations(); track station.code) {
           <mat-option [value]="station.code">{{ station.name }}</mat-option>
         }
@@ -105,12 +110,43 @@
     </button>
   </div>
 
-  <table mat-table [dataSource]="filteredRecords()" class="results-table">
+  <table
+    mat-table
+    [dataSource]="sortedRecords()"
+    matSort
+    [matSortActive]="sortState().active"
+    [matSortDirection]="sortState().direction"
+    (matSortChange)="onSortChange($event)"
+    class="results-table"
+  >
     @for (column of columns; track column.key) {
-      <ng-container [matColumnDef]="column.key">
-        <th mat-header-cell *matHeaderCellDef>{{ column.label }}</th>
-        <td mat-cell *matCellDef="let record">{{ formatCell(record, column.key) }}</td>
-      </ng-container>
+      @if (column.key === 'weather_icon') {
+        <ng-container matColumnDef="weather_icon">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header>{{ column.label }}</th>
+          <td mat-cell *matCellDef="let record" class="weather-icon-cell">
+            @switch (record.precipitation_type) {
+              @case ('S') {
+                <mat-icon class="weather-icon weather-icon--snow" fontSet="material-symbols-outlined">
+                  weather_snowy
+                </mat-icon>
+              }
+              @case ('W') {
+                <mat-icon class="weather-icon weather-icon--rain" fontSet="material-symbols-outlined">
+                  rainy
+                </mat-icon>
+              }
+              @default {
+                <span class="weather-icon--empty">—</span>
+              }
+            }
+          </td>
+        </ng-container>
+      } @else {
+        <ng-container [matColumnDef]="column.key">
+          <th mat-header-cell *matHeaderCellDef mat-sort-header>{{ column.label }}</th>
+          <td mat-cell *matCellDef="let record">{{ formatCell(record, column.key) }}</td>
+        </ng-container>
+      }
     }
 
     <tr mat-header-row *matHeaderRowDef="visibleColumns()"></tr>
@@ -125,5 +161,5 @@
     </tr>
   </table>
 
-  <p class="results-count">Liczba rekordów: {{ filteredRecords().length }}</p>
+  <p class="results-count">Liczba rekordów: {{ sortedRecords().length }}</p>
 </div>

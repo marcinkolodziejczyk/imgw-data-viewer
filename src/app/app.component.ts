@@ -4,15 +4,24 @@ import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
+import { MatSortModule, Sort } from '@angular/material/sort';
 import { MatTableModule } from '@angular/material/table';
 import { ImgDataService, Station, WeatherRecord } from './imgw-data.service';
 import { DEFAULT_STATION_NAME } from './app.config';
 
 type Measurement = 'tmax' | 'tmin' | 'tavg' | 'tmin_ground' | 'precipitation' | 'snow_depth';
-type WeatherColumn = 'date' | 'station_name' | 'station_code' | Measurement | 'precipitation_type' | 'tmaxmin';
+type WeatherColumn =
+  | 'date'
+  | 'station_name'
+  | 'station_code'
+  | Measurement
+  | 'precipitation_type'
+  | 'tmaxmin'
+  | 'weather_icon';
 
 interface ColumnOption {
   key: WeatherColumn;
@@ -26,9 +35,11 @@ interface ColumnOption {
     FormsModule,
     MatButtonModule,
     MatFormFieldModule,
+    MatIconModule,
     MatInputModule,
     MatProgressBarModule,
     MatSelectModule,
+    MatSortModule,
     MatTableModule,
   ],
   templateUrl: './app.component.html',
@@ -40,7 +51,7 @@ export class AppComponent {
 
   readonly stations = signal<Station[]>([]);
   readonly availableYears = signal<number[]>([]);
-  readonly selectedStation = signal('');
+  readonly selectedStations = signal<string[]>([]);
   readonly fromDate = signal('');
   readonly toDate = signal('');
   readonly selectedMeasurement = signal<Measurement | ''>('');
@@ -49,6 +60,16 @@ export class AppComponent {
   readonly records = signal<WeatherRecord[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
+
+  readonly ALL_STATIONS = '__ALL__';
+
+  readonly isAllStationsSelected = computed(
+    () => this.stations().length > 0 && this.selectedStations().length === this.stations().length,
+  );
+
+  readonly stationSelectModel = computed(() =>
+    this.isAllStationsSelected() ? [this.ALL_STATIONS, ...this.selectedStations()] : this.selectedStations(),
+  );
 
   readonly measurements: { key: Measurement; label: string }[] = [
     { key: 'tmax', label: 'Temperatura maksymalna (°C)' },
@@ -70,6 +91,7 @@ export class AppComponent {
     { key: 'tmin_ground', label: 'T przy gruncie (°C)' },
     { key: 'precipitation', label: 'Opad (mm)' },
     { key: 'precipitation_type', label: 'Rodzaj opadu' },
+    { key: 'weather_icon', label: 'Pogoda' },
     { key: 'snow_depth', label: 'Pokrywa śnieżna (cm)' },
   ];
   readonly visibleColumns = signal<WeatherColumn[]>([
@@ -80,6 +102,7 @@ export class AppComponent {
     'tavg',
     'precipitation',
     'precipitation_type',
+    'weather_icon',
   ]);
 
   readonly filteredRecords = computed(() => {
@@ -92,6 +115,17 @@ export class AppComponent {
       if (value === null) return false;
       return (min === null || value >= min) && (max === null || value <= max);
     });
+  });
+
+  readonly sortState = signal<Sort>({ active: 'date', direction: 'asc' });
+
+  readonly sortedRecords = computed(() => {
+    const { active, direction } = this.sortState();
+    const data = [...this.filteredRecords()];
+    if (!active || !direction) return data;
+    const factor = direction === 'asc' ? 1 : -1;
+    const column = active as WeatherColumn;
+    return data.sort((a, b) => factor * this.compareRecords(a, b, column));
   });
 
   constructor() {
@@ -120,7 +154,7 @@ export class AppComponent {
       const latestYear = availableYears.at(-1) ?? new Date().getFullYear();
       const today = new Date().toISOString().slice(0, 10);
       const defaultStation = stations.find((s) => s.name.toUpperCase() === DEFAULT_STATION_NAME) ?? stations[0];
-      this.selectedStation.set(defaultStation.code);
+      this.selectedStations.set([defaultStation.code]);
       this.fromDate.set(`${latestYear}-01-01`);
       this.toDate.set(today.startsWith(`${latestYear}-`) ? today : `${latestYear}-12-31`);
       await this.search();
@@ -132,11 +166,11 @@ export class AppComponent {
   }
 
   async search(): Promise<void> {
-    const station = this.selectedStation();
+    const stationCodes = this.selectedStations();
     const from = this.fromDate();
     const to = this.toDate();
-    if (!station || !from || !to) {
-      this.error.set('Wybierz stację i podaj obie daty.');
+    if (stationCodes.length === 0 || !from || !to) {
+      this.error.set('Wybierz co najmniej jedną stację i podaj obie daty.');
       return;
     }
     if (from > to) {
@@ -156,19 +190,61 @@ export class AppComponent {
       const lastYear = Number(to.slice(0, 4));
       const years = this.availableYears().filter((year) => year >= firstYear && year <= lastYear);
       const results = await Promise.all(
-        years.map((year) => firstValueFrom(this.dataService.getData(station, year))),
+        stationCodes.flatMap((station) =>
+          years.map((year) => firstValueFrom(this.dataService.getData(station, year))),
+        ),
       );
       this.records.set(
         results
           .flat()
           .filter((record) => record.date >= from && record.date <= to)
-          .sort((a, b) => a.date.localeCompare(b.date)),
+          .sort((a, b) => a.date.localeCompare(b.date) || a.station_name.localeCompare(b.station_name)),
       );
     } catch (error) {
       this.error.set(this.getErrorMessage(error));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  onSortChange(sort: Sort): void {
+    this.sortState.set(sort);
+  }
+
+  private compareRecords(a: WeatherRecord, b: WeatherRecord, column: WeatherColumn): number {
+    if (column === 'tmaxmin') {
+      const byTmax = this.compareNullable(a.tmax, b.tmax);
+      return byTmax !== 0 ? byTmax : this.compareNullable(a.tmin, b.tmin);
+    }
+    if (column === 'weather_icon') {
+      return this.compareNullable(a.precipitation_type, b.precipitation_type);
+    }
+    return this.compareNullable(a[column], b[column]);
+  }
+
+  private compareNullable(a: number | string | null, b: number | string | null): number {
+    if (a === null) return b === null ? 0 : 1;
+    if (b === null) return -1;
+    if (typeof a === 'number' && typeof b === 'number') return a - b;
+    return String(a).localeCompare(String(b), 'pl');
+  }
+
+  onStationsChange(selected: string[]): void {
+    const wasAllSelected = this.isAllStationsSelected();
+    const hasAllOption = selected.includes(this.ALL_STATIONS);
+    const realSelected = selected.filter((code) => code !== this.ALL_STATIONS);
+
+    if (hasAllOption && !wasAllSelected) {
+      // Użytkownik zaznaczył opcję "Zaznacz wszystkie" – wybieramy wszystkie stacje.
+      this.selectedStations.set(this.stations().map((s) => s.code));
+      return;
+    }
+    if (!hasAllOption && wasAllSelected && realSelected.length === this.selectedStations().length) {
+      // Użytkownik odznaczył "Zaznacz wszystkie" bez dotykania pojedynczych stacji – czyścimy wybór.
+      this.selectedStations.set([]);
+      return;
+    }
+    this.selectedStations.set(realSelected);
   }
 
   setVisibleColumns(selected: WeatherColumn[]): void {
@@ -200,7 +276,7 @@ export class AppComponent {
 
   exportCsv(): void {
     const columns = this.visibleColumns();
-    const rows = this.filteredRecords();
+    const rows = this.sortedRecords();
     if (columns.length === 0 || rows.length === 0) return;
 
     const lines = [
@@ -214,7 +290,11 @@ export class AppComponent {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const station = this.stations().find((s) => s.code === this.selectedStation())?.name ?? this.selectedStation();
+    const stationCodes = this.selectedStations();
+    const station =
+      stationCodes.length === 1
+        ? (this.stations().find((s) => s.code === stationCodes[0])?.name ?? stationCodes[0])
+        : `${stationCodes.length}_stacji`;
     link.href = url;
     link.download = `imgw_${station}_${this.fromDate()}_${this.toDate()}.csv`.replace(/\s+/g, '_');
     document.body.appendChild(link);
@@ -232,6 +312,9 @@ export class AppComponent {
   }
 
   formatCell(record: WeatherRecord, column: WeatherColumn): string {
+    if (column === 'weather_icon') {
+      return this.formatCell(record, 'precipitation_type');
+    }
     const value = record[column];
     if (value === null || value === undefined || value === '') return '—';
     if (column === 'precipitation_type') {
