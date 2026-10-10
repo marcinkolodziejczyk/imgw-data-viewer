@@ -1,0 +1,254 @@
+import { Component, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
+import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
+import { FormsModule } from '@angular/forms';
+import { firstValueFrom } from 'rxjs';
+import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
+import { MatTableModule } from '@angular/material/table';
+import { ImgDataService, Station, WeatherRecord } from './imgw-data.service';
+import { DEFAULT_STATION_NAME } from './app.config';
+
+type Measurement = 'tmax' | 'tmin' | 'tavg' | 'tmin_ground' | 'precipitation' | 'snow_depth';
+type WeatherColumn = 'date' | 'station_name' | 'station_code' | Measurement | 'precipitation_type' | 'tmaxmin';
+
+interface ColumnOption {
+  key: WeatherColumn;
+  label: string;
+}
+
+@Component({
+  selector: 'app-root',
+  imports: [
+    DragDropModule,
+    FormsModule,
+    MatButtonModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatProgressBarModule,
+    MatSelectModule,
+    MatTableModule,
+  ],
+  templateUrl: './app.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
+  styleUrl: './app.component.css',
+})
+export class AppComponent {
+  private readonly dataService = inject(ImgDataService);
+
+  readonly stations = signal<Station[]>([]);
+  readonly availableYears = signal<number[]>([]);
+  readonly selectedStation = signal('');
+  readonly fromDate = signal('');
+  readonly toDate = signal('');
+  readonly selectedMeasurement = signal<Measurement | ''>('');
+  readonly minValue = signal<number | null>(null);
+  readonly maxValue = signal<number | null>(null);
+  readonly records = signal<WeatherRecord[]>([]);
+  readonly loading = signal(false);
+  readonly error = signal('');
+
+  readonly measurements: { key: Measurement; label: string }[] = [
+    { key: 'tmax', label: 'Temperatura maksymalna (°C)' },
+    { key: 'tmin', label: 'Temperatura minimalna (°C)' },
+    { key: 'tavg', label: 'Temperatura średnia (°C)' },
+    { key: 'tmin_ground', label: 'Temperatura przy gruncie (°C)' },
+    { key: 'precipitation', label: 'Opad (mm)' },
+    { key: 'snow_depth', label: 'Pokrywa śnieżna (cm)' },
+  ];
+
+  readonly columns: ColumnOption[] = [
+    { key: 'date', label: 'Data' },
+    { key: 'station_name', label: 'Stacja' },
+    { key: 'station_code', label: 'Kod stacji' },
+    { key: 'tmax', label: 'T maks. (°C)' },
+    { key: 'tmin', label: 'T min. (°C)' },
+    { key: 'tavg', label: 'T śr. (°C)' },
+    { key: 'tmaxmin', label: 'T maks./min. (°C)' },
+    { key: 'tmin_ground', label: 'T przy gruncie (°C)' },
+    { key: 'precipitation', label: 'Opad (mm)' },
+    { key: 'precipitation_type', label: 'Rodzaj opadu' },
+    { key: 'snow_depth', label: 'Pokrywa śnieżna (cm)' },
+  ];
+  readonly visibleColumns = signal<WeatherColumn[]>([
+    'date',
+    'station_name',
+    'tmax',
+    'tmin',
+    'tavg',
+    'precipitation',
+    'precipitation_type',
+  ]);
+
+  readonly filteredRecords = computed(() => {
+    const measurement = this.selectedMeasurement();
+    const min = this.minValue();
+    const max = this.maxValue();
+    return this.records().filter((record) => {
+      if (!measurement) return true;
+      const value = record[measurement];
+      if (value === null) return false;
+      return (min === null || value >= min) && (max === null || value <= max);
+    });
+  });
+
+  constructor() {
+    void this.loadInitialData();
+  }
+
+  async loadInitialData(): Promise<void> {
+    this.loading.set(true);
+    this.error.set('');
+    try {
+      const [stations, status] = await Promise.all([
+        firstValueFrom(this.dataService.getStations()),
+        firstValueFrom(this.dataService.getStatus()),
+      ]);
+      this.stations.set(stations);
+      const availableYears = [...new Set(
+        status.files
+          .map((file) => file.match(/_(\d{4})\.csv$/i)?.[1])
+          .filter((year): year is string => year !== undefined)
+          .map(Number),
+      )].sort((a, b) => a - b);
+      this.availableYears.set(availableYears);
+
+      if (stations.length === 0) return;
+
+      const latestYear = availableYears.at(-1) ?? new Date().getFullYear();
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultStation = stations.find((s) => s.name.toUpperCase() === DEFAULT_STATION_NAME) ?? stations[0];
+      this.selectedStation.set(defaultStation.code);
+      this.fromDate.set(`${latestYear}-01-01`);
+      this.toDate.set(today.startsWith(`${latestYear}-`) ? today : `${latestYear}-12-31`);
+      await this.search();
+    } catch (error) {
+      this.error.set(this.getErrorMessage(error));
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  async search(): Promise<void> {
+    const station = this.selectedStation();
+    const from = this.fromDate();
+    const to = this.toDate();
+    if (!station || !from || !to) {
+      this.error.set('Wybierz stację i podaj obie daty.');
+      return;
+    }
+    if (from > to) {
+      this.error.set('Data początkowa nie może być późniejsza od końcowej.');
+      return;
+    }
+    if (this.minValue() !== null && this.maxValue() !== null && this.minValue()! > this.maxValue()!) {
+      this.error.set('Wartość minimalna nie może być większa od maksymalnej.');
+      return;
+    }
+
+    this.loading.set(true);
+    this.error.set('');
+    this.records.set([]);
+    try {
+      const firstYear = Number(from.slice(0, 4));
+      const lastYear = Number(to.slice(0, 4));
+      const years = this.availableYears().filter((year) => year >= firstYear && year <= lastYear);
+      const results = await Promise.all(
+        years.map((year) => firstValueFrom(this.dataService.getData(station, year))),
+      );
+      this.records.set(
+        results
+          .flat()
+          .filter((record) => record.date >= from && record.date <= to)
+          .sort((a, b) => a.date.localeCompare(b.date)),
+      );
+    } catch (error) {
+      this.error.set(this.getErrorMessage(error));
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  setVisibleColumns(selected: WeatherColumn[]): void {
+    if (selected.length === 0) {
+      this.visibleColumns.set(['date']);
+      return;
+    }
+    const current = this.visibleColumns();
+    const kept = current.filter((key) => selected.includes(key));
+    const added = selected.filter((key) => !current.includes(key));
+    this.visibleColumns.set([...kept, ...added]);
+  }
+
+  dropColumn(event: CdkDragDrop<WeatherColumn[]>): void {
+    const columns = [...this.visibleColumns()];
+    moveItemInArray(columns, event.previousIndex, event.currentIndex);
+    this.visibleColumns.set(columns);
+  }
+
+  removeColumn(key: WeatherColumn): void {
+    const remaining = this.visibleColumns().filter((column) => column !== key);
+    if (remaining.length === 0) return;
+    this.visibleColumns.set(remaining);
+  }
+
+  columnLabel(key: WeatherColumn): string {
+    return this.columns.find((column) => column.key === key)?.label ?? key;
+  }
+
+  exportCsv(): void {
+    const columns = this.visibleColumns();
+    const rows = this.filteredRecords();
+    if (columns.length === 0 || rows.length === 0) return;
+
+    const lines = [
+      columns.map((key) => this.csvEscape(this.columnLabel(key))).join(';'),
+      ...rows.map((record) =>
+        columns.map((key) => this.csvEscape(this.formatCell(record, key))).join(';'),
+      ),
+    ];
+    const csvContent = '\ufeff' + lines.join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const station = this.stations().find((s) => s.code === this.selectedStation())?.name ?? this.selectedStation();
+    link.href = url;
+    link.download = `imgw_${station}_${this.fromDate()}_${this.toDate()}.csv`.replace(/\s+/g, '_');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  private csvEscape(value: string): string {
+    if (value === '—') return '';
+    if (/[";\r\n]/.test(value)) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  }
+
+  formatCell(record: WeatherRecord, column: WeatherColumn): string {
+    const value = record[column];
+    if (value === null || value === undefined || value === '') return '—';
+    if (column === 'precipitation_type') {
+      return value === 'S' ? 'Śnieg' : value === 'W' ? 'Deszcz' : String(value);
+    }
+    return typeof value === 'number'
+      ? value.toLocaleString('pl-PL', { maximumFractionDigits: 1 })
+      : String(value);
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (typeof error === 'object' && error !== null && 'error' in error) {
+      const response = error.error;
+      if (typeof response === 'object' && response !== null && 'detail' in response) {
+        return String(response.detail);
+      }
+    }
+    return 'Nie udało się połączyć z API IMGW. Sprawdź, czy serwer działa pod adresem localhost:8000.';
+  }
+}
