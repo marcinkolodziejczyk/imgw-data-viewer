@@ -1,0 +1,28 @@
+<div class="weather-chart">
+  <div class="weather-chart__header">
+    <h2 class="weather-chart__title">
+      Wykres
+      @if (stationLabel()) {
+        – {{ stationLabel() }}
+      }
+    </h2>
+    <div class="weather-chart__metrics">
+      @for (metric of metrics; track metric.key) {
+        <mat-checkbox
+          [checked]="isSelected(metric.key)"
+          (change)="toggleMetric(metric.key, $event)"
+        >
+          {{ metric.label }}
+        </mat-checkbox>
+      }
+    </div>
+  </div>
+
+  @if (chartRecords().length === 0) {
+    <p class="weather-chart__empty">Brak danych do narysowania wykresu.</p>
+  } @else {
+    <div class="weather-chart__canvas-wrap">
+      <canvas #canvas></canvas>
+    </div>
+  }
+</div>

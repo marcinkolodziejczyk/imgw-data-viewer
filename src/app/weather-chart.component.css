@@ -1,0 +1,37 @@
+.weather-chart {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.weather-chart__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.weather-chart__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.weather-chart__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.weather-chart__canvas-wrap {
+  position: relative;
+  height: 320px;
+}
+
+.weather-chart__empty {
+  color: rgba(0, 0, 0, 0.6);
+}

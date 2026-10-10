@@ -3,6 +3,7 @@ import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { MatButtonModule } from '@angular/material/button';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -12,6 +13,7 @@ import { MatSortModule, Sort } from '@angular/material/sort';
 import { MatTableModule } from '@angular/material/table';
 import { ImgDataService, Station, WeatherRecord } from './imgw-data.service';
 import { DEFAULT_STATION_NAME } from './app.config';
+import { WeatherChartComponent } from './weather-chart.component';
 
 type Measurement = 'tmax' | 'tmin' | 'tavg' | 'tmin_ground' | 'precipitation' | 'snow_depth';
 type WeatherColumn =
@@ -34,6 +36,7 @@ interface ColumnOption {
     DragDropModule,
     FormsModule,
     MatButtonModule,
+    MatCheckboxModule,
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
@@ -41,6 +44,7 @@ interface ColumnOption {
     MatSelectModule,
     MatSortModule,
     MatTableModule,
+    WeatherChartComponent,
   ],
   templateUrl: './app.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -60,6 +64,10 @@ export class AppComponent {
   readonly records = signal<WeatherRecord[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
+
+  readonly comparePreviousYear = signal(false);
+  readonly previousYearRecords = signal<WeatherRecord[]>([]);
+  readonly previousYearLoading = signal(false);
 
   readonly ALL_STATIONS = '__ALL__';
 
@@ -116,6 +124,42 @@ export class AppComponent {
       return (min === null || value >= min) && (max === null || value <= max);
     });
   });
+
+  readonly chartStationCode = computed(() => this.selectedStations()[0] ?? null);
+
+  readonly chartStationLabel = computed(() => {
+    const code = this.chartStationCode();
+    if (!code) return '';
+    return this.stations().find((station) => station.code === code)?.name ?? code;
+  });
+
+  readonly chartRecords = computed(() => {
+    const code = this.chartStationCode();
+    if (!code) return [];
+    return this.filteredRecords().filter((record) => record.station_code === code);
+  });
+
+  readonly chartPreviousYearRecords = computed(() => {
+    const code = this.chartStationCode();
+    if (!code) return [];
+    return this.previousYearRecords().filter((record) => record.station_code === code);
+  });
+
+  // Keyed by "station_code|MM-DD" so the table can look up "what was this
+  // station's value on the same calendar day last year" for any row.
+  private readonly previousYearByKey = computed(() => {
+    const map = new Map<string, WeatherRecord>();
+    for (const record of this.previousYearRecords()) {
+      map.set(`${record.station_code}|${record.date.slice(5)}`, record);
+    }
+    return map;
+  });
+
+  private readonly previousYearExcludedColumns = new Set<WeatherColumn>([
+    'date',
+    'station_name',
+    'station_code',
+  ]);
 
   readonly sortState = signal<Sort>({ active: 'date', direction: 'asc' });
 
@@ -200,11 +244,60 @@ export class AppComponent {
           .filter((record) => record.date >= from && record.date <= to)
           .sort((a, b) => a.date.localeCompare(b.date) || a.station_name.localeCompare(b.station_name)),
       );
+      if (this.comparePreviousYear()) {
+        await this.loadPreviousYearData();
+      }
     } catch (error) {
       this.error.set(this.getErrorMessage(error));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  async onTogglePreviousYear(enabled: boolean): Promise<void> {
+    this.comparePreviousYear.set(enabled);
+    if (enabled) {
+      await this.loadPreviousYearData();
+    }
+  }
+
+  private async loadPreviousYearData(): Promise<void> {
+    const stationCodes = this.selectedStations();
+    const from = this.fromDate();
+    const to = this.toDate();
+    if (stationCodes.length === 0 || !from || !to) {
+      this.previousYearRecords.set([]);
+      return;
+    }
+    const prevFrom = this.shiftYear(from, -1);
+    const prevTo = this.shiftYear(to, -1);
+    this.previousYearLoading.set(true);
+    try {
+      const firstYear = Number(prevFrom.slice(0, 4));
+      const lastYear = Number(prevTo.slice(0, 4));
+      const years = this.availableYears().filter((year) => year >= firstYear && year <= lastYear);
+      // Fetched for every selected station (not just the chart's station), so the
+      // table can also show the faded previous-year value for each visible row.
+      const results = await Promise.all(
+        stationCodes.flatMap((station) =>
+          years.map((year) => firstValueFrom(this.dataService.getData(station, year))),
+        ),
+      );
+      this.previousYearRecords.set(
+        results.flat().filter((record) => record.date >= prevFrom && record.date <= prevTo),
+      );
+    } catch {
+      // Comparison data is a non-essential extra: fail silently and simply
+      // show the chart/table without the previous-year overlay.
+      this.previousYearRecords.set([]);
+    } finally {
+      this.previousYearLoading.set(false);
+    }
+  }
+
+  private shiftYear(dateStr: string, delta: number): string {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return `${year + delta}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
 
   onSortChange(sort: Sort): void {
@@ -323,6 +416,19 @@ export class AppComponent {
     return typeof value === 'number'
       ? value.toLocaleString('pl-PL', { maximumFractionDigits: 1 })
       : String(value);
+  }
+
+  supportsPreviousYear(column: WeatherColumn): boolean {
+    return !this.previousYearExcludedColumns.has(column);
+  }
+
+  previousYearRecordFor(record: WeatherRecord): WeatherRecord | undefined {
+    return this.previousYearByKey().get(`${record.station_code}|${record.date.slice(5)}`);
+  }
+
+  previousYearCellText(record: WeatherRecord, column: WeatherColumn): string {
+    const previous = this.previousYearRecordFor(record);
+    return previous ? this.formatCell(previous, column) : '—';
   }
 
   private getErrorMessage(error: unknown): string {
