@@ -83,11 +83,11 @@
 .cell-value--previous {
   font-size: 0.75rem;
   line-height: 1.3;
-  color: rgba(0, 0, 0, 0.38);
+  color: #e76f00;
 }
 
 .weather-icon--previous {
-  opacity: 0.45;
+  color: #e76f00;
   font-size: 18px;
   width: 18px;
   height: 18px;

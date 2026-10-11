@@ -27,9 +27,42 @@
   gap: 4px 16px;
 }
 
+.weather-chart__zoom-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.875rem;
+}
+
+.weather-chart__reset-zoom {
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.weather-chart__reset-zoom:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .weather-chart__canvas-wrap {
   position: relative;
   height: 320px;
+}
+
+.weather-chart__canvas-wrap canvas {
+  cursor: grab;
+}
+
+.weather-chart__canvas-wrap canvas:active {
+  cursor: grabbing;
 }
 
 .weather-chart__empty {

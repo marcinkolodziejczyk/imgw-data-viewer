@@ -11,7 +11,10 @@ import {
 } from '@angular/core';
 import { MatCheckboxChange, MatCheckboxModule } from '@angular/material/checkbox';
 import { Chart, ChartDataset } from 'chart.js/auto';
+import zoomPlugin from 'chartjs-plugin-zoom';
 import { WeatherRecord } from './imgw-data.service';
+
+Chart.register(zoomPlugin);
 
 type ChartMeasurement = 'tmax' | 'tmin' | 'tavg' | 'tmin_ground' | 'precipitation' | 'snow_depth';
 
@@ -40,9 +43,7 @@ const SNOW_COLOR = '#4fc3f7';
 const RAIN_COLOR = '#1565c0';
 const NEUTRAL_COLOR = 'rgba(66, 165, 245, 0.35)';
 
-// Opacity used for the "previous year" overlay series, so they read as a
-// faded echo of the current-year data instead of competing with it.
-const PREVIOUS_YEAR_ALPHA = 0.4;
+const PREVIOUS_YEAR_COLOR = '#e76f00';
 
 @Component({
   selector: 'app-weather-chart',
@@ -105,6 +106,10 @@ export class WeatherChartComponent implements OnDestroy {
     this.selectedMetrics.set(next);
   }
 
+  resetZoom(): void {
+    this.chart?.resetZoom();
+  }
+
   private renderChart(
     canvas: HTMLCanvasElement,
     records: WeatherRecord[],
@@ -136,16 +141,8 @@ export class WeatherChartComponent implements OnDestroy {
           label: `${metric.label} – ubiegły rok`,
           data: records.map((record) => previousYearByDay.get(record.date.slice(5))?.[metric.key] ?? null),
           yAxisID: metric.axis,
-          borderColor: this.fadeColor(metric.color, PREVIOUS_YEAR_ALPHA),
-          backgroundColor:
-            metric.key === 'precipitation'
-              ? records.map((record) =>
-                  this.fadeColor(
-                    this.precipitationColor(previousYearByDay.get(record.date.slice(5))?.precipitation_type ?? null),
-                    PREVIOUS_YEAR_ALPHA,
-                  ),
-                )
-              : this.fadeColor(metric.color, PREVIOUS_YEAR_ALPHA),
+          borderColor: PREVIOUS_YEAR_COLOR,
+          backgroundColor: PREVIOUS_YEAR_COLOR,
           borderDash: metric.type === 'line' ? [6, 4] : undefined,
           pointRadius: metric.type === 'line' ? 0 : undefined,
           spanGaps: true,
@@ -164,6 +161,16 @@ export class WeatherChartComponent implements OnDestroy {
     }
 
     if (this.chart) {
+      const currentLabels = this.chart.data.labels ?? [];
+      const labelsChanged =
+        currentLabels.length !== labels.length || currentLabels.some((label, index) => label !== labels[index]);
+      if (labelsChanged) {
+        this.chart.destroy();
+        this.chart = null;
+      }
+    }
+
+    if (this.chart) {
       this.chart.data.labels = labels;
       this.chart.data.datasets = datasets;
       this.chart.update();
@@ -177,7 +184,23 @@ export class WeatherChartComponent implements OnDestroy {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
+        plugins: {
+          zoom: {
+            limits: {
+              x: { min: 0, max: labels.length - 1 },
+            },
+            zoom: {
+              wheel: { enabled: true },
+              mode: 'x',
+            },
+            pan: {
+              enabled: true,
+              mode: 'x',
+            },
+          },
+        },
         scales: {
+          x: { type: 'category' },
           y: {
             type: 'linear',
             position: 'left',
@@ -199,20 +222,5 @@ export class WeatherChartComponent implements OnDestroy {
     if (type === 'S') return SNOW_COLOR;
     if (type === 'W') return RAIN_COLOR;
     return NEUTRAL_COLOR;
-  }
-
-  private fadeColor(color: string, alpha: number): string {
-    const hexMatch = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-    if (hexMatch) {
-      const [, r, g, b] = hexMatch;
-      return `rgba(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)}, ${alpha})`;
-    }
-    const rgbaMatch = color.match(/^rgba?\(([^)]+)\)$/i);
-    if (rgbaMatch) {
-      const parts = rgbaMatch[1].split(',').map((part) => part.trim());
-      const [r, g, b] = parts;
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-    return color;
   }
 }
